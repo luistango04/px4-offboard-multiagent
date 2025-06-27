@@ -58,13 +58,22 @@ def generate_launch_description():
         Node(
             package='px4_offboard',
             namespace=namespace,
+            executable='visualizer',
+            name='visualizer',
+            parameters=[
+                {'namespace': namespace}
+            ]
+        ),
+        Node(
+            package='px4_offboard',
+            namespace=namespace,
             executable='offboard_control',
             name='control',
             parameters= [
                 {'radius': 10.0},
                 {'altitude': 5.0},
                 {'omega': 0.5},
-                {'namespace': 'drone1'}
+                {'namespace': namespace}
             ]
         ),
         OpaqueFunction(function=launch_setup),
@@ -93,15 +102,15 @@ def launch_setup(context, *args, **kwargs):
     Function to set up the launch context and patch the RViz configuration.
     """
     namespace = LaunchConfiguration('namespace').perform(context)
-    #rviz_config_path = os.path.join(get_package_share_directory('px4_offboard'), 'visualize.rviz')
-    #patched_config = patch_rviz_config(rviz_config_path, namespace)
+    rviz_config_path = os.path.join(get_package_share_directory('px4_offboard'), 'visualize.rviz')
+    patched_config = patch_rviz_config(rviz_config_path, namespace)
 
-    # return [
-    #     Node(
-    #         package='rviz2',
-    #         namespace='',
-    #         executable='rviz2',
-    #         name='rviz2',
-    #         arguments=['-d', patched_config]
-    #     )
-    # ]
+    return [
+        Node(
+            package='rviz2',
+            namespace='',
+            executable='rviz2',
+            name='rviz2',
+            arguments=['-d', patched_config]
+        )
+    ]

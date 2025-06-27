@@ -49,30 +49,31 @@ from geometry_msgs.msg import PoseStamped, Point
 from nav_msgs.msg import Path
 from visualization_msgs.msg import Marker
 
-class PX4Visualizer(Node):
-    def __init__(self):
-        super().__init__("visualizer")
 
-        # Declare and retrieve the namespace parameter
-        self.declare_parameter('namespace', '')  # Default to empty namespace
-        self.namespace = self.get_parameter('namespace').value
+
+class PX4Visualizer(Node):
+    def __init__(self, namespace: str = '', prefix: str = '', node_name: str = ''):
+        node_name = node_name or f'visualizer_{prefix or namespace or "default"}'
+        super().__init__(node_name)
+
+        self.namespace = namespace
+        self.prefix = prefix
         self.namespace_prefix = f'/{self.namespace}' if self.namespace else ''
 
-        # QoS profiles
-        qos_profile_pub = QoSProfile(
-            reliability=QoSReliabilityPolicy.BEST_EFFORT,
-            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
-            history=QoSHistoryPolicy.KEEP_LAST,
-            depth=0
+        self.get_logger().info(
+            f"[INIT] Node name: '{node_name}', Namespace: '{self.namespace}', "
+            f"Prefix: '{self.prefix}', Namespace prefix: '{self.namespace_prefix}'"
         )
 
+        # QoS
         qos_profile_sub = QoSProfile(
             reliability=QoSReliabilityPolicy.BEST_EFFORT,
             durability=QoSDurabilityPolicy.VOLATILE,
             history=QoSHistoryPolicy.KEEP_LAST,
-            depth=0
+            depth=10
         )
 
+        # Subscriptions
         self.attitude_sub = self.create_subscription(
             VehicleAttitude,
             f"{self.namespace_prefix}/fmu/out/vehicle_attitude",
@@ -92,6 +93,31 @@ class PX4Visualizer(Node):
             qos_profile_sub,
         )
 
+        # Publishers
+        self.vehicle_pose_pub = self.create_publisher(
+            PoseStamped,
+            f"{self.namespace_prefix}/px4_visualizer/vehicle_pose",
+            10
+        )
+        self.vehicle_vel_pub = self.create_publisher(
+            Marker,
+            f"{self.namespace_prefix}/px4_visualizer/vehicle_velocity",
+            10
+        )
+        self.vehicle_path_pub = self.create_publisher(
+            Path,
+            f"{self.namespace_prefix}/px4_visualizer/vehicle_path",
+            10
+        )
+        self.setpoint_path_pub = self.create_publisher(
+            Path,
+            f"{self.namespace_prefix}/px4_visualizer/setpoint_path",
+            10
+        )
+
+        self.get_logger().info(f"[TOPICS] Subscribed/Publishing under namespace: {self.namespace_prefix}")
+
+        # Publishers
         self.vehicle_pose_pub = self.create_publisher(
             PoseStamped, f"{self.namespace_prefix}/px4_visualizer/vehicle_pose", 10
         )
@@ -105,6 +131,7 @@ class PX4Visualizer(Node):
             Path, f"{self.namespace_prefix}/px4_visualizer/setpoint_path", 10
         )
 
+
         self.vehicle_attitude = np.array([1.0, 0.0, 0.0, 0.0])
         self.vehicle_local_position = np.array([0.0, 0.0, 0.0])
         self.vehicle_local_velocity = np.array([0.0, 0.0, 0.0])
@@ -113,7 +140,7 @@ class PX4Visualizer(Node):
         self.setpoint_path_msg = Path()
 
         # trail size
-        self.trail_size = 1000
+        self.trail_size = 3000
 
         # time stamp for the last local position update received on ROS2 topic
         self.last_local_pos_update = 0.0
