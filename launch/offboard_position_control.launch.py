@@ -93,15 +93,15 @@ def launch_setup(context, *args, **kwargs):
     Function to set up the launch context and patch the RViz configuration.
     """
     namespace = LaunchConfiguration('namespace').perform(context)
-    #rviz_config_path = os.path.join(get_package_share_directory('px4_offboard'), 'visualize.rviz')
-    #patched_config = patch_rviz_config(rviz_config_path, namespace)
+    rviz_config_path = os.path.join(get_package_share_directory('px4_offboard'), 'visualize.rviz')
+    patched_config = patch_rviz_config(rviz_config_path, namespace)
 
-    # return [
-    #     Node(
-    #         package='rviz2',
-    #         namespace='',
-    #         executable='rviz2',
-    #         name='rviz2',
-    #         arguments=['-d', patched_config]
-    #     )
-    # ]
+    return [
+        Node(
+            package='rviz2',
+            namespace='',
+            executable='rviz2',
+            name='rviz2',
+            arguments=['-d', patched_config]
+        )
+    ]
