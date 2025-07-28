@@ -117,21 +117,6 @@ class PX4Visualizer(Node):
 
         self.get_logger().info(f"[TOPICS] Subscribed/Publishing under namespace: {self.namespace_prefix}")
 
-        # Publishers
-        self.vehicle_pose_pub = self.create_publisher(
-            PoseStamped, f"{self.namespace_prefix}/px4_visualizer/vehicle_pose", 10
-        )
-        self.vehicle_vel_pub = self.create_publisher(
-            Marker, f"{self.namespace_prefix}/px4_visualizer/vehicle_velocity", 10
-        )
-        self.vehicle_path_pub = self.create_publisher(
-            Path, f"{self.namespace_prefix}/px4_visualizer/vehicle_path", 10
-        )
-        self.setpoint_path_pub = self.create_publisher(
-            Path, f"{self.namespace_prefix}/px4_visualizer/setpoint_path", 10
-        )
-
-
         self.vehicle_attitude = np.array([1.0, 0.0, 0.0, 0.0])
         self.vehicle_local_position = np.array([0.0, 0.0, 0.0])
         self.vehicle_local_velocity = np.array([0.0, 0.0, 0.0])

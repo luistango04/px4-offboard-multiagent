@@ -69,87 +69,32 @@ from px4_msgs.msg import VehicleCommand  # ✅ Required import
 from px4_msgs.msg import VehicleOdometry  # Ensure this import is present
 
 
-
-
+from droneinterface.droneinterface import DroneDataInterface
 class OffboardControl(Node):
-
-    def __init__(self):
-        super().__init__('minimal_publisher')
-
-        # Declare and retrieve the namespace parameter
-        self.declare_parameter('namespace', '')  # Default to empty namespace
-        self.namespace = self.get_parameter('namespace').value
-        self.targetsystemid = 2
-        self.namespace_prefix = f'/{self.namespace}' if self.namespace else ''
-        
-                # QoS profiles
-        qos_profile_pub = QoSProfile(
-            reliability=QoSReliabilityPolicy.BEST_EFFORT,
-            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
-            history=QoSHistoryPolicy.KEEP_LAST,
-            depth=1
-        )
-
-        qos_profile_sub = QoSProfile(
-            reliability=QoSReliabilityPolicy.BEST_EFFORT,
-            durability=QoSDurabilityPolicy.VOLATILE,
-            history=QoSHistoryPolicy.KEEP_LAST,
-            depth=1
-        )
-
-        self.status_sub = self.create_subscription(
-            VehicleStatus,
-            f'{self.namespace_prefix}/fmu/out/vehicle_status_v1',
-            self.vehicle_status_callback,
-            qos_profile_sub)
-
-        self.get_logger().info(f"Class Created: '{self.namespace_prefix}/fmu/in/'")
-
-        self.publisher_offboard_mode = self.create_publisher(
-            OffboardControlMode, f'{self.namespace_prefix}/fmu/in/offboard_control_mode', qos_profile_pub)
-        
-        self.subscription_odometry = self.create_subscription(
-            VehicleOdometry,
-            f'{self.namespace_prefix}/fmu/out/vehicle_odometry',
-            self.odometry_callback,
-            qos_profile_sub  # Replace with your actual QoS profile
-        )
-
-
-        self.publisher_offboard_mode = self.create_publisher(OffboardControlMode, f'{self.namespace_prefix}/fmu/in/offboard_control_mode', qos_profile_pub)
-
-        
-        self.publisher_trajectory = self.create_publisher(TrajectorySetpoint, f'{self.namespace_prefix}/fmu/in/trajectory_setpoint', qos_profile_pub)
-        timer_period = 0.02  # seconds.
-        
-        self.vehicle_command_publisher = self.create_publisher(
-            VehicleCommand, f'{self.namespace_prefix}/fmu/in/vehicle_command', qos_profile_pub)  # ✅ Needed
-
-        self.timer = self.create_timer(timer_period, self.cmdloop_callback)
-        self.dt = timer_period
-
-        self.declare_parameter('radius', 10.0)
-        self.declare_parameter('omega', 5.0)
-        self.declare_parameter('altitude', 5.0)
-
-        self.nav_state = VehicleStatus.NAVIGATION_STATE_MAX
-        self.arming_state = VehicleStatus.ARMING_STATE_DISARMED
-        # Note: no parameter callbacks are used to prevent sudden inflight changes of radii and omega 
-        # which would result in large discontinuities in setpoints
-        self.theta = 0.0
-        self.radius = self.get_parameter('radius').value
-        self.omega = self.get_parameter('omega').value
-        self.altitude = self.get_parameter('altitude').value
- 
-
-    def __init__(self, namespace='drone1',targetsystemid = 2):
+    def __init__(self, namespace='drone1', targetsystemid=2):
         super().__init__('minimal_publisher')
         self.namespace = namespace
         self.targetsystemid = targetsystemid
         self.namespace_prefix = f'/{self.namespace}' if self.namespace else ''
-        # Declare and retrieve the namespace parameter
+        self.get_logger().info("🚀 Flight Modes Initialized")
 
-                # QoS profiles
+        self.FLIGHT_MODES = {
+            "HOLD": 4.0,
+            "OFFBOARD": 6.0,
+            "MANUAL": 1.0,
+            "ALTCTL": 2.0,
+            "POSCTL": 3.0,
+            "AUTO_MISSION": 10.0,
+            "AUTO_LOITER": 11.0,
+            "AUTO_RTL": 12.0
+        }
+
+        self.latest_odometry = None
+        self.latest_status = None
+        self.timertoggle = 0
+        self.dt = 0.02
+
+        # QoS Profiles
         qos_profile_pub = QoSProfile(
             reliability=QoSReliabilityPolicy.BEST_EFFORT,
             durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
@@ -161,237 +106,176 @@ class OffboardControl(Node):
             reliability=QoSReliabilityPolicy.BEST_EFFORT,
             durability=QoSDurabilityPolicy.VOLATILE,
             history=QoSHistoryPolicy.KEEP_LAST,
-            depth=1
+            depth=5
         )
 
-        self.status_sub = self.create_subscription(
-            VehicleStatus,
-            f'{self.namespace_prefix}/fmu/out/vehicle_status_v1',
-            self.vehicle_status_callback,
-            qos_profile_sub)
+        # Data Interface
+        self.data_interface = DroneDataInterface(f'{self.namespace_prefix}/fmu/out', qos_profile_sub)
 
-        print(f"ClassobjectCreated: {self.namespace_prefix}")
+        # # Subscribers
+        # self.status_sub = self.create_subscription(
+        #     VehicleStatus,
+        #     f'{self.namespace_prefix}/fmu/out/vehicle_status_v1',
+        #     self.vehicle_status_callback,
+        #     qos_profile_sub
+        # )
+
+        # Publishers
         self.publisher_offboard_mode = self.create_publisher(
-            OffboardControlMode, f'{self.namespace_prefix}/fmu/in/offboard_control_mode', qos_profile_pub)
+            OffboardControlMode,
+            f'{self.namespace_prefix}/fmu/in/offboard_control_mode',
+            qos_profile_pub
+        )
 
+        self.publisher_trajectory = self.create_publisher(
+            TrajectorySetpoint,
+            f'{self.namespace_prefix}/fmu/in/trajectory_setpoint',
+            qos_profile_pub
+        )
 
-        self.publisher_offboard_mode = self.create_publisher(OffboardControlMode, f'{self.namespace_prefix}/fmu/in/offboard_control_mode', qos_profile_pub)
-
-        
-        self.publisher_trajectory = self.create_publisher(TrajectorySetpoint, f'{self.namespace_prefix}/fmu/in/trajectory_setpoint', qos_profile_pub)
-        timer_period = 0.02  # seconds.
-        
         self.vehicle_command_publisher = self.create_publisher(
-            VehicleCommand, f'{self.namespace_prefix}/fmu/in/vehicle_command', qos_profile_pub)  # ✅ Needed
+            VehicleCommand,
+            f'{self.namespace_prefix}/fmu/in/vehicle_command',
+            qos_profile_pub
+        )
 
-        self.timer = self.create_timer(timer_period, self.cmdloop_callback)
-        self.dt = timer_period
+        # Timer
+        self.timer = self.create_timer(self.dt, self.cmdloop_callback)
 
-        self.declare_parameter('radius', 10.0)
-        self.declare_parameter('omega', 5.0)
-        self.declare_parameter('altitude', 5.0)
-
+        # Initial States
         self.nav_state = VehicleStatus.NAVIGATION_STATE_MAX
         self.arming_state = VehicleStatus.ARMING_STATE_DISARMED
-        # Note: no parameter callbacks are used to prevent sudden inflight changes of radii and omega 
-        # which would result in large discontinuities in setpoints
-        self.theta = 0.0
-        self.radius = self.get_parameter('radius').value
-        self.omega = self.get_parameter('omega').value
-        self.altitude = self.get_parameter('altitude').value
+
+        print(f"[INIT] Class Object Created: {self.namespace_prefix}")
+
     def odometry_callback(self, msg):
         self.latest_odometry = msg
+        self.get_logger().debug("📡 Odometry Received")
+
     def get_position(self):
         if not self.latest_odometry:
-            self.get_logger().warn("No odometry data received yet.")
+            self.get_logger().warn("❗ No odometry data received yet.")
             return None
 
-        position = {
+        pos = {
             'x': self.latest_odometry.position[0],
             'y': self.latest_odometry.position[1],
-            'z': self.latest_odometry.position[2],
+            'z': self.latest_odometry.position[2]
         }
+        self.get_logger().info(f"📍 Position (NED): x={pos['x']:.2f}, y={pos['y']:.2f}, z={pos['z']:.2f}")
+        return pos
 
-        self.get_logger().info(f"Current position (NED): x={position['x']:.2f}, y={position['y']:.2f}, z={position['z']:.2f}")
-        return position
+    def vehicle_status(self):
+        self.latest_status = self.data_interface.get_vehicle_status()
+        self.nav_state = self.latest_status.nav_state
+        self.arming_state = self.latest_status.arming_state
 
-
-    def vehicle_status_callback(self, msg):
-        # TODO: handle NED->ENU transformation
-        self.latest_status = msg  # Store the whole message
-        self.nav_state = msg.nav_state
-        self.arming_state = msg.arming_state
-    def odometry_callback(self, msg):
-        self.latest_odometry = msg
     def get_status(self):
-
+        self.vehicle_status()
         if self.latest_status:
-            self.get_logger().info(f"Current nav state: {self.nav_state}, arming state: {self.arming_state}")
+            self.get_logger().info(f"📈 Nav State: {self.nav_state}, Arming State: {self.arming_state}")
         else:
-            self.get_logger().warn("Vehicle status not yet received.")
+            self.get_logger().warn("⚠️ Vehicle status not yet received.")
+        return self.latest_status
 
-        return getattr(self, 'latest_status', None)
-
-    def publish_vehicle_command(self,
-                                command,
-                                param1=0.0,
-                                param2=0.0,
-                                param3=0.0,
-                                param4=float('nan'),
-                                param5=float('nan'),
-                                param6=float('nan'),
-                                param7=float('nan'),
-                                frame=0):
+    def publish_vehicle_command(self, command, param1=0.0, param2=0.0,
+                                param3=0.0, param4=float('nan'), param5=float('nan'),
+                                param6=float('nan'), param7=float('nan'), frame=0):
         msg = VehicleCommand()
-        msg.param1 = param1
-        msg.param2 = param2
-        msg.param3 = param3
-        msg.param4 = param4
-        msg.param5 = param5
-        msg.param6 = param6
-        msg.param7 = param7
+        msg.param1, msg.param2, msg.param3 = param1, param2, param3
+        msg.param4, msg.param5, msg.param6, msg.param7 = param4, param5, param6, param7
         msg.command = command
-        #msg.frame = frame  # 🔹 Set frame if applicable
-
         msg.target_system = self.targetsystemid
         msg.target_component = 1
         msg.source_system = 1
         msg.source_component = 1
         msg.from_external = True
-        msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)  # microseconds
+        msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
 
         self.vehicle_command_publisher.publish(msg)
-        self.get_logger().info(
-            f"📤 Sent VehicleCommand {command} with altitude={param7}, frame={frame}"
-        )
-
-
-
-    def set_position_mode(self):
-        # PX4 main mode for Position Control is 1
-        PX4_MAIN_MODE_POSCTL = 1
-
-        self.publish_vehicle_command(
-            command=VehicleCommand.VEHICLE_CMD_DO_SET_MODE,
-            param1=1.0,  # Custom mode (ignored for PX4, but required)
-            param2=float(PX4_MAIN_MODE_POSCTL)
-        )
-
-        self.get_logger().info(f"Position Control mode command sent to '{self.namespace_prefix}/fmu/in/vehicle_command'")
+        self.get_logger().info(f"📤 Sent VehicleCommand {command} with param7={param7}, frame={frame}")
 
     def arm(self):
         self.publish_vehicle_command(VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, param1=1.0)
-        
-        self.get_logger().info(f"Arm command sent to '{self.namespace_prefix}/fmu/in/vehicle_command'")
+        self.get_logger().info("✅ Arm command sent")
 
     def disarm(self):
-        self.publish_vehicle_command(VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, 0.0)
-        self.get_logger().info("Disarm command sent")
+        self.publish_vehicle_command(VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, param1=0.0)
+        self.get_logger().info("🛑 Disarm command sent")
 
-    def publish_offboard_control_mode(self):
-        msg = OffboardControlMode()
-        msg.position = True
-        msg.velocity = False
-        msg.acceleration = False
-        msg.attitude = False
-        msg.body_rate = False
-        msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
-        self.publisher_offboard_mode.publish(msg)
+    def set_position_mode(self):
+        PX4_MAIN_MODE_POSCTL = 1
+        self.publish_vehicle_command(
+            command=VehicleCommand.VEHICLE_CMD_DO_SET_MODE,
+            param1=1.0,
+            param2=float(PX4_MAIN_MODE_POSCTL)
+        )
+        self.get_logger().info("🔁 Position Control mode requested")
+
+    def switch_flight_mode(self, mode_name: str):
+        mode_value = self.FLIGHT_MODES.get(mode_name.upper())
+        if mode_value is None:
+            self.get_logger().error(f"❌ Invalid flight mode: '{mode_name}'")
+            return
+
+        self.timertoggle = 1 if mode_name.upper() == "OFFBOARD" else 0
+        self.publish_vehicle_command(
+            command=VehicleCommand.VEHICLE_CMD_DO_SET_MODE,
+            param1=1.0,
+            param2=mode_value
+        )
+        self.get_logger().info(f"✈️ Switching to {mode_name.upper()} mode...")
 
     def takeoff(self, altitude=10.0):
         self.publish_vehicle_command(
             command=VehicleCommand.VEHICLE_CMD_NAV_TAKEOFF,
-            param7= altitude
-
+            param7=altitude
         )
-        #self.get_logger().info(f"Takeoff command sent to altitude {altitude}m")
-
+        self.get_logger().info(f"⬆️ Takeoff to {altitude} meters initiated")
 
     def land(self):
-        # Altitude is given in param7 (takeoff altitude above home)
         self.publish_vehicle_command(
-            command=VehicleCommand.VEHICLE_CMD_NAV_LAND,
-            
+            command=VehicleCommand.VEHICLE_CMD_NAV_LAND
         )
-        self.get_logger().info(f"Landing Drone {self.namespace}")
+        self.get_logger().info(f"⬇️ Landing command sent for drone: {self.namespace}")
 
-    def gototargetposition(self,target_x,target_y,target_z):
-        # Step 1: Publish the offboard control mode (position only)
-        offboard_msg = OffboardControlMode()
-        offboard_msg.position = True
-        offboard_msg.velocity = False
-        offboard_msg.acceleration = False
-        offboard_msg.attitude = False
-        offboard_msg.body_rate = False
-        self.publisher_offboard_mode.publish(offboard_msg)
+    def gototargetposition(self, target_x, target_y, target_z):
+        status = self.data_interface.get_vehicle_status()
+        if (
+            status and
+            status.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD and
+            status.arming_state == VehicleStatus.ARMING_STATE_ARMED
+        ):
+            offboard_msg = OffboardControlMode()
+            offboard_msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
+            offboard_msg.position = True
 
-        # Step 2: Only send trajectory if armed and in OFFBOARD mode
-        if (self.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD and
-            self.arming_state == VehicleStatus.ARMING_STATE_ARMED):
+            self.publisher_offboard_mode.publish(offboard_msg)
 
             trajectory_msg = TrajectorySetpoint()
             trajectory_msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
-
-            # Set target position (ENU frame)
-            trajectory_msg.position[0] = target_x  # X
-            trajectory_msg.position[1] = target_y  # Y
-            trajectory_msg.position[2] = -target_z  # Z-down in PX4
+            trajectory_msg.position[0] = target_x
+            trajectory_msg.position[1] = target_y
+            trajectory_msg.position[2] = -target_z  # Z-down
 
             self.publisher_trajectory.publish(trajectory_msg)
-# void OffboardControl::arm()
-# {
-# 	publish_vehicle_command(VehicleCommand::VEHICLE_CMD_COMPONENT_ARM_DISARM, 1.0);
-
-# 	RCLCPP_INFO(this->get_logger(), "Arm command send");
-# }
-
-# void OffboardControl::disarm()  
-# {
-# 	publish_vehicle_command(VehicleCommand::VEHICLE_CMD_COMPONENT_ARM_DISARM, 0.0);
-
-# 	RCLCPP_INFO(this->get_logger(), "Disarm command send");
-# }
-
-# void OffboardControl::publish_offboard_control_mode()
-# {
-# 	OffboardControlMode msg{};
-# 	msg.position = true;
-# 	msg.velocity = false;
-# 	msg.acceleration = false;
-# 	msg.attitude = false;
-# 	msg.body_rate = false;
-# 	msg.timestamp = this->get_clock()->now().nanoseconds() / 1000;
-# 	offboard_control_mode_publisher_->publish(msg);
-# }
-
-
+            self.get_logger().info("🎯 Trajectory setpoint published")
+        else:
+            self.get_logger().warn("❌ Drone not armed or not in OFFBOARD mode")
+            self.switch_flight_mode("OFFBOARD")
 
     def cmdloop_callback(self):
-        # Publish offboard control modes
-        offboard_msg = OffboardControlMode()
-        offboard_msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
-        offboard_msg.position=True
-        offboard_msg.velocity=False
-        offboard_msg.acceleration=False
-        self.publisher_offboard_mode.publish(offboard_msg)
-        if (self.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD and self.arming_state == VehicleStatus.ARMING_STATE_ARMED):
-
-            trajectory_msg = TrajectorySetpoint()
-            trajectory_msg.position[0] = self.radius * np.cos(self.theta)
-            trajectory_msg.position[1] = self.radius * np.sin(self.theta)
-            trajectory_msg.position[2] = -self.altitude
-            self.publisher_trajectory.publish(trajectory_msg)
-
-            self.theta = self.theta + self.omega * self.dt
+        if self.timertoggle:
+            offboard_msg = OffboardControlMode()
+            offboard_msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
+            offboard_msg.position = True
+            self.publisher_offboard_mode.publish(offboard_msg)
 
 
 def main(args=None):
     rclpy.init(args=args)
-
     offboard_control = OffboardControl()
-
     rclpy.spin(offboard_control)
-
     offboard_control.destroy_node()
     rclpy.shutdown()
 
